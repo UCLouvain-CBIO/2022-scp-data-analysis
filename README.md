@@ -1,5 +1,5 @@
 This repository contains the scripts allowing to reproduce the
-figures of 
+figures from 
 
 > Christophe Vanderaa and Laurent Gatto, **The current state of 
 > single-cell proteomics data analysis**, 2022 arXiv, 
@@ -45,10 +45,6 @@ The results are based on the the SCP replications documented in
 using the [scp](https://uclouvain-cbio.github.io/scp/) R/Bioconductor
 package and the data in
 [scpdata](https://www.bioconductor.org/packages/release/data/experiment/html/scpdata.html).
-
-## Link to article
-
-TODO
 
 ## Figures
 
