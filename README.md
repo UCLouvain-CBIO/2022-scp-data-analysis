@@ -1,6 +1,9 @@
 This repository contains the scripts allowing to reproduce the
-figures of *The current state of single-cell proteomics data analysis*
-by Christophe Vanderaa and Laurent Gatto.
+figures of 
+
+> Christophe Vanderaa and Laurent Gatto, **The current state of 
+> single-cell proteomics data analysis**, 2022 arXiv, 
+> doi:[10.48550/ARXIV.2210.01020](https://arxiv.org/abs/2210.01020).
 
 ## Key messages
 
