@@ -61,6 +61,73 @@ The figures were generated in R.
   `scripts/make_figure2and3.R` as the Figure 4 relies on results generated for
   Figure 3.
 
+## Reproduction with Docker
+
+The figures can be reproduced using the
+`bioconductor/bioconductor_docker:RELEASE_3_16` image. Get the image
+running:
+
+```
+docker pull bioconductor/bioconductor_docker:RELEASE_3_16
+```
+
+Change directory (`cd`) to your local clone of this repository and
+start the container using: 
+
+```
+docker run -e PASSWORD=scp \
+		-v `pwd`:/home/rstudio/paper/ \
+		-it bioconductor/bioconductor_docker:RELEASE_3_16 \
+    bash
+```
+
+The `-v` enables you to get access to the scripts within the container
+and to store your images locally. 
+
+In order to run the scripts to reproduce the figures, you'll need to 
+run the following steps: 
+
+- Install and configure python dependencies (for running `sceptre`):
+
+```bash
+RUN apt-get update \
+	## Install the python package sceptre
+	&& pip install git+https://github.com/bfurtwa/Sceptre.git@818a8914fe87788642f9b0dcdb49991ba8a4506a \
+    ## Install specific version of NumPy to solve dependency issues, and install 
+	## other python dependencies
+    && pip install NumPy==1.22 IPython leidenalg \ 
+	## Remove packages in '/var/cache/' and 'var/lib'
+	## to remove side-effects of apt-get update
+	&& apt-get clean \
+	&& rm -rf /var/lib/apt/lists/* \
+	## Switch to libblas for better integration of python in reticulate. 
+	&& ARCH=$(uname -m) \
+	&& update-alternatives --set "libblas.so.3-${ARCH}-linux-gnu" "/usr/lib/${ARCH}-linux-gnu/blas/libblas.so.3" \
+	&& update-alternatives --set "liblapack.so.3-${ARCH}-linux-gnu" "/usr/lib/${ARCH}-linux-gnu/lapack/liblapack.so.3"
+
+```
+
+- Change directory and open an R session:
+
+```bash
+cd /home/rstudio/paper/
+R
+```
+
+- Finally, install the following R packages:
+
+```r
+BiocManager::install(c("tidyverse", "patchwork", "RColorBrewer", 
+                       "scpdata", "scp", "biomaRt", "scater", "scran",
+                       "igraph", "viridis", "cluster", "scuttle", 
+                       "reticulate", "zellkonverter", "scuttle", 
+                       "UCLouvain-CBIO/SCP.replication"))
+```
+
+
+
+
+
 ## Licence
 
 <a rel="license" href="http://creativecommons.org/licenses/by-sa/4.0/"><img alt="Creative Commons Licence" style="border-width:0" src="https://i.creativecommons.org/l/by-sa/4.0/80x15.png" /></a><br />This work is licensed under a <a rel="license" href="http://creativecommons.org/licenses/by-sa/4.0/">Creative Commons Attribution-ShareAlike 4.0 International License</a>.

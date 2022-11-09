@@ -1,7 +1,19 @@
+
+# BiocManager::install(c("scpdata", "scp", "tidyverse", "patchwork",
+#                        "SCP.replication", "reticulate", "zellkonverter",
+#                        "scuttle"))
 library("scpdata")
 library("scp")
 library("tidyverse")
 library("patchwork")
+library("SCP.replication")
+library("biomaRt")
+library("scater")
+library("scran")
+library("igraph")
+library("viridis")
+library("cluster")
+library("RColorBrewer")
 
 ####---- Define computational workflows for data processing ----####
 
@@ -30,6 +42,7 @@ runSceptre <- function(x, colvarSampleType, scPattern, rowvarProtein,
     adata <- SCE2AnnData(sce, X_name = 1)
     spt$normalize(adata)
     sce <- AnnData2SCE(adata)
+    colData(sce) <- NULL
     x <- addAssay(x, sce, name = "proteins_norm")
     x <- addAssayLink(x, from = "proteins", to = "proteins_norm",
                       varFrom = rowvarProtein, varTo = rowvarProtein)
@@ -69,6 +82,7 @@ runSceptre <- function(x, colvarSampleType, scPattern, rowvarProtein,
     adata <- SCE2AnnData(sce, X_name = 1)
     spt$impute(adata)
     sce <- AnnData2SCE(adata)
+    colData(sce) <- NULL
     x <- addAssay(x, sce, name = "proteins_imput")
     x <- addAssayLinkOneToOne(x, from = "proteins_log", to = "proteins_imput")
     ## Normalization
@@ -160,33 +174,28 @@ runSCoPE2 <- function(x, colvarSampleType, colvarMSbatch, colvarScType,
                name = "proteins_norm2")
     ## Imputation
     cat("Imputation\n\n")
-    x <- impute(x, i = "proteins_norm2", method = "knn",
-                k = 3, rowmax = 1, colmax= 1,
-                maxp = Inf, rng.seed = 1234)
+    # x <- impute(x, i = "proteins_norm2", method = "knn",
+    #             name = "proteins_impd",
+    #             k = 3, rowmax = 1, colmax= 1,
+    #             maxp = Inf, rng.seed = 1234)
+    x <- imputeKnnSCoPE2(x, i = "proteins_norm2", 
+                         name = "proteins_impd", k = 3)
     ## Batch correction
     cat("Batch correction\n\n")
-    sce <- getWithColData(x, "proteins_norm2")
+    sce <- getWithColData(x, "proteins_impd")
     batch <- as.character(colData(sce)[, colvarMSbatch])
     formul <- as.formula(paste0("~", colvarScType))
-    
     ## Remove confounded batches
     tab <- table(batch = batch, interest = colData(x)[, colvarScType])
     sel <- rownames(tab)[rowSums(tab != 0) > 1]
-    x <- subsetByColData(x, colData(x)[, colvarMSbatch] %in% sel)
+    sce <- sce[, colData(sce)[, colvarMSbatch] %in% sel]
     model <- model.matrix(formul, data = colData(sce))
-    require(sva)
-    assay(sce) <- ComBat(dat = assay(sce), batch = batch, mod = model)
+    batch <- as.character(colData(sce)[, colvarMSbatch])
+    # assay(sce) <- sva::ComBat(dat = assay(sce), batch = batch, mod = model)
+    assay(sce) <- ComBatv3.34(dat = assay(sce), batch = batch, mod = model)
+    colData(sce) <- NULL
     x <- addAssay(x, y = sce, name = "proteins_batchC")
-    x <- addAssayLinkOneToOne(x, from = "proteins_norm2", to = "proteins_batchC")
-    ## Normalization 
-    cat("Normalization\n\n")
-    x <- normalizeSCP(x, i = "proteins_batchC", method = "center.median",
-                      name = "proteins_batchC_norm1")
-    sweep(x, i = "proteins_batchC_norm1",
-          MARGIN = 1, FUN = "-",
-          STATS = rowMeans(assay(x[["proteins_batchC_norm1"]]),
-                           na.rm = TRUE),
-          name = "proteins_scope2")
+    addAssayLinkOneToOne(x, from = "proteins_impd", to = "proteins_batchC")
 }
 
 ####---- Process specht data using SCoPE2 workflow ----####
@@ -196,6 +205,9 @@ runSCoPE2 <- function(x, colvarSampleType, colvarMSbatch, colvarScType,
 
 ## Retrieve the specht2019v3 dataset
 specht <- specht2019v3()
+specht <- selectRowData(specht, c("dart_PEP", "protein", "peptide", "PIF",
+                                  "dart_qval"))
+
 ## Remove the peptide and protein data that was provided by the authors
 specht <- specht[, , -(178:179)]
 ## Solve the peptide to protein mapping ambiguity 
@@ -232,7 +244,7 @@ spechtProcessedScope2 <-
               scPattern = "Mono|Macro",
               ncPattern = "Blank",
               refPattern = "Reference")
-save(spechtProcessedScope2, file = "scripts/data/spechtProcessedScope2.Rda")
+save(spechtProcessedScope2, file = "data/spechtProcessedScope2.Rda")
 
 ####---- Process specht data using sceptre workflow ----####
 
@@ -256,11 +268,14 @@ spechtProcessedSceptre <-
                colvarSampleType = "SampleType",
                colvarMSbatch = "Set",
                colvarChannel = "Channel")
-save(spechtProcessedSceptre, file = "scripts/data/spechtProcessedSceptre.Rda")
+save(spechtProcessedSceptre, file = "data/spechtProcessedSceptre.Rda")
 
 ####---- Process schoof data using SCoPE2 workflow ----####
 
 schoofall <- schoof2021()
+schoofall <- selectRowData(schoofall, c("isContaminant", "Percolator.PEP", "Master.Protein.Accessions", "Annotated.Sequence",
+                                  "Isolation.Interference.in.Percent"))
+
 schoofpsms <- schoofall[, , 1:192]
 schoofproteins <- schoofall[, , "proteins"]
 ## Add PIF information
@@ -299,7 +314,7 @@ schoofProcessedScope2 <-
               scPattern = "^sc$",
               ncPattern = "neg",
               refPattern = "norm")
-save(schoofProcessedScope2, file = "scripts/data/schoofProcessedScope2.Rda")
+save(schoofProcessedScope2, file = "data/schoofProcessedScope2.Rda")
 
 ####---- Process schoof data using sceptre workflow ----####
 
@@ -315,33 +330,44 @@ schoofProcessedSceptre <-
                colvarSampleType = "SampleType", 
                colvarMSbatch = "File.ID",
                colvarChannel = "Channel")
-save(schoofProcessedSceptre, file = "scripts/data/schoofProcessedSceptre.Rda")
+save(schoofProcessedSceptre, file = "data/schoofProcessedSceptre.Rda")
 
 ####---- Prepare results for comparison ----####
 
 ## First we extract the last assay and save it in a new file (avoids the need to
 ## recompute all the processing every time we want to make changes to the figure)
 
-load("scripts/data/spechtProcessedSceptre.Rda")
+load("data/spechtProcessedSceptre.Rda")
 protsSpechtSceptre <- getWithColData(spechtProcessedSceptre, "proteins_scaled")
-save(protsSpechtSceptre, file = "scripts/data/protsSpechtSceptre.Rda")
-load("scripts/data/spechtProcessedScope2.Rda")
-protsSpechtScope2 <- getWithColData(spechtProcessedScope2, "proteins_scope2")
-save(protsSpechtScope2, file = "scripts/data/protsSpechtScope2.Rda")
-load("scripts/data/schoofProcessedSceptre.Rda")
+protsSpechtSceptre$CellType <- protsSpechtSceptre$SampleType
+protsSpechtSceptre$MSbatch <- protsSpechtSceptre$Set
+metadata(protsSpechtSceptre) <- list(dataset = "specht2021", workflow = "SCeptre")
+save(protsSpechtSceptre, file = "data/protsSpechtSceptre.Rda")
+
+load("data/spechtProcessedScope2.Rda")
+protsSpechtScope2 <- getWithColData(spechtProcessedScope2, "proteins_batchC")
+protsSpechtScope2$CellType <- protsSpechtScope2$SampleType
+protsSpechtScope2$MSbatch <- protsSpechtScope2$Set
+metadata(protsSpechtScope2) <- list(dataset = "specht2021", workflow = "SCoPE2")
+save(protsSpechtScope2, file = "data/protsSpechtScope2.Rda")
+
+load("data/schoofProcessedSceptre.Rda")
 protsSchoofSceptre <- getWithColData(schoofProcessedSceptre, "proteins_scaled")
-save(protsSchoofSceptre, file = "scripts/data/protsSchoofSceptre.Rda")
-load("scripts/data/schoofProcessedScope2.Rda")
-protsSchoofScope2 <- getWithColData(schoofProcessedScope2, "proteins_scope2")
+protsSchoofSceptre$CellType <- protsSchoofSceptre$Population
+protsSchoofSceptre$MSbatch <- protsSchoofSceptre$File.ID
+metadata(protsSchoofSceptre) <- list(dataset = "schoof2021", workflow = "SCeptre")
+save(protsSchoofSceptre, file = "data/protsSchoofSceptre.Rda")
+
+load("data/schoofProcessedScope2.Rda")
+protsSchoofScope2 <- getWithColData(schoofProcessedScope2, "proteins_batchC")
 ## The Schoof dataset requires to convert uniprot ID to protein symbol
-library(biomaRt)
 mart <- useMart("ensembl")
 human <- useDataset("hsapiens_gene_ensembl", mart)
 upid <- unique(unlist(strsplit(rownames(protsSchoofScope2), "_or_ ")))
 symbol <- getBM(attributes = c("uniprot_gn_symbol", "uniprot_gn_id"), 
-              filters = "uniprot_gn_id",
-              values = upid,
-              mart = human)
+                filters = "uniprot_gn_id",
+                values = upid,
+                mart = human)
 rnames <- rownames(protsSchoofScope2)
 for(i in seq_along(rnames)) {
     idsvec <- strsplit(rnames[[i]], "_or_ ")[[1]]
@@ -352,30 +378,16 @@ for(i in seq_along(rnames)) {
     rnames[[i]] <- paste0(idsvec, collapse = "; ")
 }
 rownames(protsSchoofScope2) <- rnames
-save(protsSchoofScope2, file = "scripts/data/protsSchoofScope2.Rda")
-
-## Load data (to avoid rerunning the above)
-load("scripts/data/protsSpechtSceptre.Rda")
-load("scripts/data/protsSpechtScope2.Rda")
-load("scripts/data/protsSchoofSceptre.Rda")
-load("scripts/data/protsSchoofScope2.Rda")
-
-## Rename some columns and store metainformation in each processed dataset
-protsSpechtSceptre$CellType <- protsSpechtSceptre$SampleType
-protsSpechtSceptre$MSbatch <- protsSpechtSceptre$Set
-metadata(protsSpechtSceptre) <- list(dataset = "specht2021", workflow = "SCeptre")
-
-protsSpechtScope2$CellType <- protsSpechtScope2$SampleType
-protsSpechtScope2$MSbatch <- protsSpechtScope2$Set
-metadata(protsSpechtScope2) <- list(dataset = "specht2021", workflow = "SCoPE2")
-
-protsSchoofSceptre$CellType <- protsSchoofSceptre$Population
-protsSchoofSceptre$MSbatch <- protsSchoofSceptre$File.ID
-metadata(protsSchoofSceptre) <- list(dataset = "schoof2021", workflow = "SCeptre")
-
 protsSchoofScope2$CellType <- protsSchoofScope2$Population
 protsSchoofScope2$MSbatch <- protsSchoofScope2$File.ID
 metadata(protsSchoofScope2) <- list(dataset = "schoof2021", workflow = "SCoPE2")
+save(protsSchoofScope2, file = "data/protsSchoofScope2.Rda")
+
+## Load data (to avoid rerunning the above)
+load("data/protsSpechtSceptre.Rda")
+load("data/protsSpechtScope2.Rda")
+load("data/protsSchoofSceptre.Rda")
+load("data/protsSchoofScope2.Rda")
 
 ## Combine all datasets in a single object
 prots <- list(SpechtSceptre = protsSpechtSceptre,
@@ -385,7 +397,6 @@ prots <- list(SpechtSceptre = protsSpechtSceptre,
 
 ####---- Compare dimension reduciton ----####
 
-library(scater)
 
 ## Compare PCA
 prots <- lapply(prots, runPCA, exprs_values = 1)
@@ -402,8 +413,6 @@ tsnePlots <- lapply(prots, plotTSNE, colour_by = "CellType")
 
 ####---- Perform clustering ----####
 
-library("scran")
-library("igraph")
 prots <- lapply(prots, function(x){
     ## Cell types are known a priori
     x$SupervisedLabel <- as.integer(as.factor(x$CellType)) 
@@ -422,7 +431,6 @@ prots <- lapply(prots, function(x){
 ####---- Compare unsupervised clustering ----####
 
 ## Create contingency tables to compare clusterings
-library(viridis)
 ## This function takes two SingleCellExperiment objects, x and y, and compares
 ## the cluster partitions stored under "UnsupervisedLabel" in the colData
 compareClusters <- function(x, y, wfName1, wfName2) {
@@ -430,7 +438,7 @@ compareClusters <- function(x, y, wfName1, wfName2) {
     sharedCells <- intersect(colnames(x), colnames(y))
     ## Get the contigency table
     clTable <- table(x = colData(x)[sharedCells, "UnsupervisedLabel"],
-                           y = colData(y)[sharedCells, "UnsupervisedLabel"])
+                     y = colData(y)[sharedCells, "UnsupervisedLabel"])
     clTable <- as.data.frame(clTable)
     ## Plot
     ggplot(clTable) +
@@ -440,22 +448,21 @@ compareClusters <- function(x, y, wfName1, wfName2) {
         geom_tile() +
         xlab(paste("Clusters from", wfName1)) +
         ylab(paste("Clusters from", wfName2)) +
-        scale_fill_viridis(discrete = FALSE, name = "Frequency") +
+        scale_fill_viridis(discrete = FALSE, name = "Number of cells") +
         theme_minimal()
 }
 ## Create plots for both datasets
 clustPlot <- list()
-(clustPlot[["schoof2021"]] <- compareClusters(prots$SchoofSceptre, prots$SchoofScope2,
-                                              "SCeptre", "SCoPE2"))
-(clustPlot[["specht2021"]] <- compareClusters(prots$SpechtSceptre, prots$SpechtScope2,
-                                              "SCeptre", "SCoPE2"))
+clustPlot[["schoof2021"]] <- compareClusters(prots$SchoofSceptre, prots$SchoofScope2,
+                                             "SCeptre", "SCoPE2")
+clustPlot[["specht2021"]] <- compareClusters(prots$SpechtSceptre, prots$SpechtScope2,
+                                             "SCeptre", "SCoPE2")
 
 ####---- Compare supervised clustering ----####
 
-## Ce consider the known cell types as clusters
+## We consider the known cell types as clusters
 
 ## Compare silhouette widths
-library("cluster")
 prots <- lapply(prots, function(x){
     ## Get the neighbourhood network from the computed clustering
     graphRes <- metadata(x)$SNNgraph
@@ -491,7 +498,7 @@ prots <- lapply(prots, function(x) {
     celltypes <- unique(x$CellType)
     withinCor <- lapply(celltypes, function (ct) {
         ctind <- which(x$CellType == ct)
-        cors <- cor(assay(x)[, ctind])
+        cors <- cor(assay(x)[, ctind], use = "pairwise.complete.obs")
         cors[lower.tri(cors, diag = TRUE)] <- NA ## avoid duplicate points
         cors <- as.vector(cors)
         cors[!is.na(cors)]
@@ -512,7 +519,7 @@ corDf <- do.call(rbind, lapply(prots, function(x) {
     }))
 }))
 
-## For each dataset, plot silhouette widths per workflow and per cell type
+## For each dataset, plot the correlations per workflow and per cell type
 corPlots <- list()
 for (i in c("schoof2021", "specht2021")) {
     corPlots[[i]] <- filter(corDf, dataset == i) %>% 
@@ -528,10 +535,46 @@ for (i in c("schoof2021", "specht2021")) {
         theme_minimal()
 }
 
+####---- Compare differential abundance analysis ----####
+
+daDf <- do.call(rbind, lapply(prots, function(x){
+    wf <- metadata(x)$workflow
+    ds <- metadata(x)$dataset
+    cat("Differental abundance for the", ds, "data processed by", wf, "\n")
+    ctypes <- unique(x$CellType)
+    df <- do.call(rbind, lapply(seq_len(nrow(x)), function(i){
+        xx <- assay(x)[i, ]
+        group1 <- xx[x$CellType == ctypes[1]]
+        group2 <- xx[x$CellType == ctypes[2]]
+        res <- t.test(group1, group2)
+        data.frame(pval = res$p.value,
+                   logFC = unname(diff(res$estimate)),
+                   workflow = wf,
+                   dataset = ds)
+    }))
+    df$padj <- p.adjust(df$pval, "BH")
+    df
+}))
+
+## For each dataset, plot the volcano plots per workflow
+daPlots <- list()
+for (i in c("schoof2021", "specht2021")) {
+    daPlots[[i]] <- filter(daDf, dataset == i) %>% 
+        ggplot() +
+        aes(x = logFC,
+            y = -log10(padj)) +
+        geom_point() +
+        xlab("Log fold change") + ylab("-log10 adjusted p-value") +
+        geom_vline(xintercept = c(-1, 1)) + 
+        geom_hline(yintercept = -log10(0.05)) + 
+        facet_wrap(~ workflow) +
+        theme_minimal()
+}
+i <- "specht2021"; daPlots[[i]] + ggtitle(paste("Dataset:", i))
+
 ####---- Create final plots ----####
 
 ## Colors
-library(RColorBrewer)
 cols <- brewer.pal(8, name = "Set2")
 
 ## Figure 2
@@ -564,9 +607,9 @@ cols <- brewer.pal(8, name = "Set2")
                             plot.title = element_text(size = 20, vjust = -5,
                                                       hjust = 0.5, face = "bold"))) &
         theme(plot.tag = element_text(face = "bold", size = 18)))
-ggsave(filename = "figs/SCoPE2_vs_sceptre_scoof2021.pdf", plotSchoof2021,
-       width = 10, height = 8)
-       
+ggsave(filename = "figs/SCoPE2_vs_sceptre_schoof2021.pdf", plotSchoof2021,
+       width = 9, height = 7)
+
 ## Figure 3
 (plotSpecht2021 <- 
         (swPlots$specht2021 +
@@ -596,4 +639,4 @@ ggsave(filename = "figs/SCoPE2_vs_sceptre_scoof2021.pdf", plotSchoof2021,
                                                                 hjust = 0.5, face = "bold"))) &
         theme(plot.tag = element_text(face = "bold", size = 18)))
 ggsave(filename = "figs/SCoPE2_vs_sceptre_specht2021.pdf", plotSpecht2021,
-       width = 9, height = 8)
+       width = 9, height = 7)
